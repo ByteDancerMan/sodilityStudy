@@ -175,10 +175,10 @@ contract NFTAuction is Initializable, UUPSUpgradeable {
 
 
     /**
- * 使用UUPS 升级合约
-*/
-function _authorizeUpgrade(address) internal override view {
-    // 只有管理员可以升级合约
-    require(msg.sender == admin, "Only admin can upgrade the contract");
-}
+    * 使用UUPS 升级合约
+    */
+    function _authorizeUpgrade(address) internal override view {
+        // 只有管理员可以升级合约
+        require(msg.sender == admin, "Only admin can upgrade the contract");
+    }
 }
