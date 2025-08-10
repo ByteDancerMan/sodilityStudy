@@ -4,7 +4,9 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "hardhat/console.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 contract NFTAuction is Initializable, UUPSUpgradeable {
     // 结构体 拍卖
@@ -27,6 +29,10 @@ contract NFTAuction is Initializable, UUPSUpgradeable {
         address nftContract;
         // NTF ID
         uint256 tokenId;
+
+        // 参与竞价的资产类型 0x 地址表示ETH 其他地址代表ERC20
+        // 参与竞拍的代币
+        address tokenAddress;
     }
 
     // 状态变量
@@ -38,12 +44,36 @@ contract NFTAuction is Initializable, UUPSUpgradeable {
     // 管理员的地址
     address public admin;
 
+    // 链上价格接口
+    // AggregatorV3Interface internal priceFeed;
+
+    mapping(address => AggregatorV3Interface) public priceFeed;
+
     // 构造函数
     function initialize() initializer public {
         admin = msg.sender;
     }
 
-    function createAuction(uint256 _duration, uint256 _startPrice, address _nftContract, uint256 _tokenId) public {
+    // 设置价格接口
+    function setPriceFeed(address tokenAddress, address _priceFeed) public {
+        priceFeed[tokenAddress] = AggregatorV3Interface(_priceFeed);
+    }
+
+    // 获取价格
+    function getLatestPrice(address tokenAddress) public returns (int256) {
+        AggregatorV3Interface pricefeed = priceFeed[tokenAddress];
+        // prettier-ignore
+        (
+            /* uint80 roundId */,
+            int256 answer,
+            /*uint256 startedAt*/,
+            /*uint256 updatedAt*/,
+            /*uint80 answeredInRound*/
+        ) = pricefeed.latestRoundData();
+        return answer;
+    }
+
+    function createAuction(uint256 _duration, uint256 _startPrice, address _nftContract, uint256 _tokenId, address _tokenAddress) public {
         // 只有管理员可以创建拍卖
         require(msg.sender == admin, "Only admin can create auction");
         require(
@@ -66,31 +96,66 @@ contract NFTAuction is Initializable, UUPSUpgradeable {
             highestBidder: address(0),
             highestBid: 0,
             nftContract: _nftContract,
-            tokenId: _tokenId
+            tokenId: _tokenId,
+            tokenAddress: _tokenAddress
         });
 
         nextAuctionId++;
     }
 
     // 买家参与竞拍
-    function bid(uint256 _auctionId) external payable {
+    function bid(uint256 _auctionId, uint256 amount, address _tokenAddress) external payable {
         // 获取拍卖信息
         Auction storage auction = auctions[_auctionId];
         // 拍卖未结束
         require(!auction.ended && (auction.startTime + auction.duration) > block.timestamp, "Auction has ended");
+
+        uint payValue;
+        uint actualAmount;
+        
+        if(_tokenAddress != address(0)) {
+            // ERC20代币支付
+            actualAmount = amount;
+            payValue = amount * uint(getLatestPrice(_tokenAddress));
+        } else { 
+            // ETH支付
+            actualAmount = msg.value;
+            payValue = msg.value * uint(getLatestPrice(address(0)));
+        }
+
+        uint startPriceValue = auction.startPrice * uint(getLatestPrice(auction.tokenAddress));
+        uint highestPriceValue = auction.highestBid * uint(getLatestPrice(auction.tokenAddress));
+        
         // 竞拍金额必须高于当前最高价
         require(
-            msg.value > auction.highestBid && msg.value >= auction.startPrice,
+            payValue > highestPriceValue && payValue >= startPriceValue,
             "Bid must be higher than the current highest bid"
         );
 
-        if (auction.highestBidder != address(0)) {
-            // 退款给 previously highest bidder
-            payable(auction.highestBidder).transfer(auction.highestBid);
+        // 只在ERC20支付时转移代币
+        if(_tokenAddress != address(0)) {
+            // 转移 ERC20到合约
+            IERC20(_tokenAddress).transferFrom(
+                msg.sender, 
+                address(this), 
+                actualAmount
+            );
         }
 
-        auction.highestBid = msg.value;
+        // 退回之前的出价
+        if (auction.highestBidder != address(0)) {
+            if (auction.tokenAddress == address(0)) {
+                // 退回之前的ETH
+                payable(auction.highestBidder).transfer(auction.highestBid);
+            } else {
+                // 退回之前的ERC20
+                IERC20(auction.tokenAddress).transfer(auction.highestBidder, auction.highestBid);
+            }
+        }
+
+        auction.tokenAddress = _tokenAddress;
         auction.highestBidder = msg.sender;
+        auction.highestBid = actualAmount;
     }
 
     /**
