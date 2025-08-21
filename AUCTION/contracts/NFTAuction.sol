@@ -60,7 +60,13 @@ contract NFTAuction is Initializable, UUPSUpgradeable {
     }
 
     // 获取价格
-    function getLatestPrice(address tokenAddress) public returns (int256) {
+    // USDC -> USD 99986171
+    // ETH -> USD ETH地址：0x0000000000000000000000000000000000000000
+    //USDC 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238
+    // USDC -> USD 0xA2F78ab2355fe2f984D808B5CeE7FD0A93D5270E
+    //ETH 	   0x0000000000000000000000000000000000000000
+    //ETH -> USD 0x694AA1769357215DE4FAC081bf1f309aDC325306
+    function getLatestPrice(address tokenAddress) public view returns (int256) {
         AggregatorV3Interface pricefeed = priceFeed[tokenAddress];
         // prettier-ignore
         (
